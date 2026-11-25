@@ -15,6 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Creación, consulta, técnicos, repuestos y ciclo de estados de las órdenes de servicio. */
 public class OrdenServicioServicio {
+    private static final Object BLOQUEO_RESERVAS = new Object();
     @FunctionalInterface
     public interface Conexiones { Connection abrir() throws SQLException; }
 
@@ -134,36 +135,50 @@ public class OrdenServicioServicio {
     }
 
     /**
-     * Aparta (reserva) unidades de un repuesto para la orden. El stock NO baja todavía:
-     * baja una sola vez, cuando la orden pasa a Completado.
-     * Disponible = stock - lo que ya está reservado por otras órdenes.
+     * Variante del ejercicio H: la reserva descuenta inmediatamente el stock.
+     * La transacción registra el consumo y marca DESCONTADO para evitar descontar
+     * de nuevo al completar la orden.
      */
     public void agregarRepuesto(int orden, int repuesto, int cantidad) throws SQLException {
-        if (orden <= 0 || repuesto <= 0) throw new IllegalArgumentException("Orden y repuesto deben ser positivos.");
-        if (cantidad <= 0) throw new IllegalArgumentException("La cantidad debe ser mayor a cero.");
-        enTransaccion(c -> {
-            String estado = nombreEstado(c, ordenes.buscar(c, orden, true));
-            if (!CicloOrden.admiteRepuestos(estado)) {
-                throw new IllegalArgumentException("Solo se agregan repuestos a órdenes Pendiente o En Proceso. "
-                        + "La orden " + orden + " está en '" + estado + "'.");
-            }
-            RepuestoOrdenDao.RepuestoBloqueado datos = repuestos.bloquear(c, repuesto);
-            if (datos.precioVenta() == null) {
-                throw new IllegalArgumentException("El repuesto '" + datos.nombre() + "' no tiene precio de venta.");
-            }
-            int disponible = datos.stock() - repuestos.totalReservado(c, repuesto);
-            if (cantidad > disponible) {
-                throw new IllegalArgumentException(String.format(
-                        "Stock insuficiente de '%s'. Pediste %d y hay %d disponibles (stock %d, ya reservado %d).",
-                        datos.nombre(), cantidad, Math.max(disponible, 0), datos.stock(), datos.stock() - disponible));
-            }
-            if (repuestos.reservasDe(c, orden).stream()
-                    .anyMatch(reserva -> reserva.getRepuestoId() == repuesto && reserva.estaActiva())) {
-                throw new IllegalArgumentException("Ese repuesto ya está asignado a la orden.");
-            }
-            repuestos.reservar(c, orden, repuesto, cantidad, datos.precioVenta());
-            return null;
-        });
+        agregarRepuesto(orden, repuesto, cantidad, mensaje -> { });
+    }
+
+    public void agregarRepuesto(int orden, int repuesto, int cantidad,
+                                java.util.function.Consumer<String> informar) throws SQLException {
+        if (orden <= 0 || repuesto <= 0 || cantidad <= 0) {
+            throw new IllegalArgumentException("Orden, repuesto y cantidad deben ser positivos.");
+        }
+        java.util.Objects.requireNonNull(informar);
+        synchronized (BLOQUEO_RESERVAS) {
+            int nuevoStock = enTransaccion(c -> {
+                String estado = nombreEstado(c, ordenes.buscar(c, orden, true));
+                if (!CicloOrden.admiteRepuestos(estado)) {
+                    throw new IllegalArgumentException("Solo se reserva en Pendiente o En Proceso.");
+                }
+                RepuestoOrdenDao.RepuestoBloqueado datos = repuestos.bloquear(c, repuesto);
+                int disponible = datos.stock() - repuestos.totalReservado(c, repuesto);
+                informar.accept("Verificando stock. Hay " + Math.max(disponible, 0) + " disponible.");
+                if (cantidad > disponible) {
+                    throw new IllegalArgumentException("No hay suficiente stock.");
+                }
+                if (datos.precioVenta() == null) {
+                    throw new IllegalArgumentException("El repuesto no tiene precio de venta.");
+                }
+                if (repuestos.reservasDe(c, orden).stream()
+                        .anyMatch(reserva -> reserva.getRepuestoId() == repuesto
+                                && reserva.getEstado() != ReservaRepuesto.EstadoReserva.CANCELADO)) {
+                    throw new IllegalArgumentException("El repuesto ya está asignado a la orden.");
+                }
+                repuestos.reservar(c, orden, repuesto, cantidad, datos.precioVenta());
+                ReservaRepuesto reserva = repuestos.reservasActivas(c, orden).stream()
+                        .filter(item -> item.getRepuestoId() == repuesto)
+                        .findFirst().orElseThrow(() -> new IllegalStateException("No se creó la reserva."));
+                repuestos.descontar(c, reserva);
+                return datos.stock() - cantidad;
+            });
+            // La operación ya está confirmada y todavía tenemos el monitor Java.
+            informar.accept("¡Reserva exitosa! Stock actualizado a " + nuevoStock + ".");
+        }
     }
 
     /** Reservas de la orden con su estado: RESERVADO, DESCONTADO o CANCELADO. */
@@ -177,7 +192,7 @@ public class OrdenServicioServicio {
 
     /**
      * Pasa la orden a su estado siguiente y devuelve el nombre del estado nuevo.
-     * Al llegar a Completado descuenta del stock lo reservado (una sola vez).
+     * Las reservas del ejercicio H ya se descuentan al asignar el repuesto.
      * El paso a Facturado no se hace aquí: lo hace FacturaServicio al emitir la factura.
      */
     public String avanzarEstado(int orden) throws SQLException {

@@ -155,3 +155,58 @@ Facturadas y Entregadas. Para guardarlo en UTF-8, escribe una ruta terminada en 
 El flujo de órdenes registra la fecha de entrega cuando la orden pasa a Entregado.
 Al completar o entregar una orden, el observador muestra en consola un aviso
 dirigido al correo del cliente después de confirmar la transacción.
+
+
+### EXAMEN
+
+### PROBLEMA
+
+El taller "CarMotors" ha comenzado a tener problemas de inventario inexplicables. En varias ocasiones, 
+dos técnicos han ido al almacén a buscar el último repuesto disponible (por ejemplo, un filtro de aceite específico), 
+solo para descubrir que ambos lo habían "reservado" en el sistema casi al mismo tiempo. Esto genera una condición 
+de carrera (race condition): el sistema muestra que ambos tienen el repuesto, pero físicamente solo existe uno.
+El resultado son retrasos, clientes molestos y una total falta de confianza en los datos del sistema.
+
+Para solucionar este grave problema de integridad de datos, es necesario hacer que la operación de reserva de 
+repuestos sea "a prueba de hilos" (thread-safe), garantizando que, sin importar cuántos técnicos intenten reservar
+la última pieza simultáneamente, solo uno pueda tener éxito.
+
+
+### Modificacion de la logica de reservas 
+### Requerimiento Detallado y Funcionamiento
+
+Tu tarea es doble: primero, modificar la lógica de negocio para que sea segura ante la concurrencia; y segundo, crear una clase de simulación que demuestre que tu solución funciona.
+
+Modificación de la Lógica de Reserva (Hacerla Thread-Safe):
+
+Debes identificar el método en tu capa de servicio que se encarga de la lógica para asignar un repuesto a una orden de servicio. Este método típicamente realiza una secuencia de operaciones:
+Lee la cantidad actual de stock del repuesto.
+Verifica si hay suficiente stock para la cantidad solicitada.
+Si hay suficiente, actualiza el stock en la base de datos, restando la cantidad.
+Esta secuencia de operaciones es una sección crítica. Debes modificar este método para asegurar que solo un hilo pueda ejecutar esta sección a la vez, utilizando un mecanismo de sincronización de Java.
+
+### SOLUCION Y RESULTADOS
+Primero se modifica la logica de negocio para que sea segura ante la concurrencia; y segundo se crea una clase de simulacion que demuestre que esta solucion funciona.
+
+Se crea la nueva clase ejecutable MainReservaConcurrente que no forma parte del flujo normal de la aplicacion
+solo sirve para mostrar la solucion, con un escenario de prueba con un repuesto especifico con la cantidad exacta en stock de 1: 'Filtro de Aceite XY-123'
+Se implementan al menos dos hilo concurrentes, cada hilo corresponde a un tecnico: Tecnico A y Tecnico B. Se crea la conexion
+a la base de datos y se crean los datos de prueba simulados para el escenario.
+
+Cada tecnico intento reservar el mismo repuesto que solo tiene una unidad en el stock, se pone la reserva en cola.
+El Tecnico A hace con exito la reserva y el Tecnico B hace la verificacion del stock disponible de ese repuesto y le
+muestra el mensaje "Hay 0 disponible" y muestra un fallo en la reserva por falta de stock y finaliza la simulacion.
+
+Primero se hace el conteo de stock, se asigna y se vuelve a hacer el conteo para la siguiente solicitud.
+
+Se muestra la carrera de los hilos cuando Tenico A y Tecnico B hacen la solicitud del repuesto y muestra el resultado
+de cada uno, para evitar que cuando solo exista un repuesto y se hagan dos reservas al mismo tiempo no aparezca que 
+los dos Tecnicos tenga el mismo repuesto en el sistema cuando fisicamente existe 1, asi se le asigna al que logro hacer primero
+la reserva y al otro le sale el mensaje de verificacion de disponibilidad. 
+
+
+### Examen final <1735> | <Simulación de Reserva Concurrente de Repuestos>
+Estudiante y grupo: <Brenda Nicol Carrillo Gonzalez> | <Grupo 6>
+Proyecto de origen: <(https://github.com/ninistrellita/proyecto-java-grupo6.git)>
+Acceso: <MainReservaConcurrente>
+Clases del examen: <MainReservaConcurrente, Resultado, OrdenServicio, ConecxionFactory, OrdenServicioDao, RepuestoOrdenDao, ReservaRepuesto, CicloOrden>
